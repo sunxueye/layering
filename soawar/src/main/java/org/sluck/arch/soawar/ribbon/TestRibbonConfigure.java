@@ -19,6 +19,8 @@ public class TestRibbonConfigure {
         config.set(CommonClientConfigKey.MaxAutoRetriesNextServer, 2); // 默认1
         config.set(CommonClientConfigKey.MaxTotalConnections, 100);
         config.set(CommonClientConfigKey.MaxConnectionsPerHost, 20);
+        config.set(CommonClientConfigKey.ConnectTimeout, 1000);
+        config.set(CommonClientConfigKey.ReadTimeout, 3000);
         return config;
     }
 }
