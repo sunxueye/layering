@@ -8,11 +8,11 @@ import org.springframework.cloud.netflix.eureka.server.EnableEurekaServer;
 @EnableEurekaServer
 public class RegistServer1Application {
 
-    //@Value("${layer.test}")
+    //@Value("${layer.cglibproxytest}")
     //private String testValue;
     //
     //@PostConstruct
-    //private void test() {
+    //private void cglibproxytest() {
     //    System.out.println("testValue is :" + testValue);
     //}
 

@@ -15,8 +15,8 @@ public class TestRibbonConfigure {
     public IClientConfig setConfig() {
         DefaultClientConfigImpl config = new DefaultClientConfigImpl();
         config.loadProperties("TestService");
-        config.set(CommonClientConfigKey.MaxAutoRetries, 1); //默认0
-        config.set(CommonClientConfigKey.MaxAutoRetriesNextServer, 2); // 默认1
+        config.set(CommonClientConfigKey.MaxAutoRetries, 0); //默认0
+        config.set(CommonClientConfigKey.MaxAutoRetriesNextServer, 1); // 默认1
         config.set(CommonClientConfigKey.MaxTotalConnections, 100);
         config.set(CommonClientConfigKey.MaxConnectionsPerHost, 20);
         config.set(CommonClientConfigKey.ConnectTimeout, 1000);

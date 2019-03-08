@@ -1,9 +1,9 @@
-package org.sluck.arch.soawar.client;
+package org.sluck.arch.api;
 
 /**
- * Created by sunxy on 2019/2/21 21:37.
+ * Created by sunxy on 2019/3/4 21:14.
  */
-public class User {
+public class TestValues {
 
     private String name;
 

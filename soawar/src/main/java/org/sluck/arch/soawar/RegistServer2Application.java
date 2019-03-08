@@ -10,11 +10,11 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 public class RegistServer2Application {
 
-    //@Value("${layer.test}")
+    //@Value("${layer.cglibproxytest}")
     //private String testValue;
     //
     //@PostConstruct
-    //private void test() {
+    //private void cglibproxytest() {
     //    System.out.println("testValue is :" + testValue);
     //}
 

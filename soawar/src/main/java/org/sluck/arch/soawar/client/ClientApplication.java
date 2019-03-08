@@ -1,20 +1,24 @@
 package org.sluck.arch.soawar.client;
 
+import com.netflix.hystrix.contrib.javanica.annotation.HystrixCommand;
+import com.netflix.hystrix.contrib.javanica.annotation.HystrixProperty;
+import com.netflix.hystrix.contrib.javanica.cache.annotation.CacheResult;
 import org.apache.http.client.config.RequestConfig;
-import org.apache.http.config.RegistryBuilder;
-import org.apache.http.conn.HttpClientConnectionManager;
 import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.http.impl.client.HttpClientBuilder;
-import org.apache.http.impl.conn.PoolingHttpClientConnectionManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.sluck.arch.api.TestClient;
+import org.sluck.arch.api.TestValues;
+import org.sluck.arch.api.User;
 import org.sluck.arch.soawar.ribbon.TestRibbonConfigure;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.web.client.RestTemplateBuilder;
+import org.springframework.boot.web.servlet.ServletComponentScan;
+import org.springframework.cloud.client.circuitbreaker.EnableCircuitBreaker;
 import org.springframework.cloud.client.loadbalancer.LoadBalanced;
-import org.springframework.cloud.commons.httpclient.ApacheHttpClientConnectionManagerFactory;
 import org.springframework.cloud.netflix.eureka.EurekaDiscoveryClient;
 import org.springframework.cloud.netflix.ribbon.RibbonClient;
 import org.springframework.cloud.openfeign.EnableFeignClients;
@@ -22,12 +26,12 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.http.client.ClientHttpRequestFactory;
 import org.springframework.http.client.HttpComponentsClientHttpRequestFactory;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.ResponseBody;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.client.RestTemplate;
 
 import javax.annotation.Resource;
 import java.time.Duration;
-import java.util.TimerTask;
 import java.util.concurrent.TimeUnit;
 
 @SpringBootApplication
@@ -35,6 +39,8 @@ import java.util.concurrent.TimeUnit;
 //@EnableDiscoveryClient
 @RestController
 @EnableFeignClients
+@EnableCircuitBreaker
+@ServletComponentScan
 @RibbonClient(name = "TestService", configuration = {TestRibbonConfigure.class})
 public class ClientApplication {
 
@@ -61,8 +67,8 @@ public class ClientApplication {
     public RestTemplate restTemplate(RestTemplateBuilder restTemplateBuilder) {
 
         return restTemplateBuilder
-                .setReadTimeout(Duration.ofMillis(5000))
-                .setConnectTimeout(Duration.ofMillis(2000))
+                .setReadTimeout(Duration.ofMillis(3000)) //会覆盖  ClientHttpRequestFactory 里的配置
+                .setConnectTimeout(Duration.ofMillis(2000)) //会覆盖  ClientHttpRequestFactory 里的配置
                 .requestFactory(this::clientHttpRequestFactory)
                 .build();
 
@@ -79,7 +85,7 @@ public class ClientApplication {
         RequestConfig requestConfig = RequestConfig.custom()
                 .setConnectionRequestTimeout(1000) //设置从 pool 获取连接超时时间
                 .setConnectTimeout(1000) //设置默认连接超时时间
-                .setSocketTimeout(1000).build(); //设置默认读超时时间
+                .setSocketTimeout(2000).build(); //设置默认读超时时间
 
         CloseableHttpClient httpClient = HttpClientBuilder.create()
                 .setMaxConnTotal(5) //最大连接数
@@ -100,18 +106,56 @@ public class ClientApplication {
     private RestTemplate restTemplate;
 
     @Resource
-    private TestClient testClient;
+    private TestClientService testClient;
 
     private Logger logger = LoggerFactory.getLogger(getClass());
 
     @RequestMapping("/hello")
-    public void serviceUrl() {
+    @HystrixCommand(
+            fallbackMethod = "fallTest",
+            groupKey = "ClientTestCommandGroup", commandKey = "ClientTestCommand",
+            commandProperties = {
+                    @HystrixProperty(name = "execution.isolation.thread.timeoutInMilliseconds", value = "2000"),
+                    @HystrixProperty(name = "circuitBreaker.requestVolumeThreshold", value = "5"),
+                    @HystrixProperty(name = "circuitBreaker.sleepWindowInMilliseconds", value = "5000"),
+                    @HystrixProperty(name = "circuitBreaker.errorThresholdPercentage", value = "60"),
+                    @HystrixProperty(name = "metrics.rollingStats.timeInMilliseconds", value = "10000"),
+                    @HystrixProperty(name = "metrics.rollingStats.numBuckets", value = "5")
+            },
+            threadPoolProperties = {
+                    @HystrixProperty(name = "coreSize", value = "15"),
+                    @HystrixProperty(name = "maxQueueSize", value = "100")
+            }
+    )
+    @CacheResult(cacheKeyMethod = "cacheName")
+    @ResponseBody
+    public String serviceUrl(String name) {
         //List<ServiceInstance> list = discoveryClient.getInstances("TestService");
         //list.stream().forEach(info -> {
         //    logger.info(info.getUri().toASCIIString());
         //});
-        User user = testClient.getStores();
-        System.out.println(user.getName());
+        TestValues tv = new TestValues();
+        tv.setName(name);
+        tv.setAge(20);
+        testService();
+        //User user = testClient.getStores(tv);
+        //System.out.println(user.getName());
+
+        return tv.getName();
+    }
+
+    public String proxyTest(String name) {
+        return serviceUrl(name);
+    }
+
+    public String cacheName(String name) {
+        return "cacheKey" + name;
+    }
+
+    public String fallTest(String name) {
+        String fall = "-------------  i am filed method, name:" + name;
+        logger.info(fall);
+        return fall;
     }
 
     @RequestMapping("/hello2")

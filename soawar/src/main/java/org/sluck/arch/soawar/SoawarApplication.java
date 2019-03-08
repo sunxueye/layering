@@ -11,11 +11,11 @@ import javax.annotation.PostConstruct;
 @EnableEurekaServer
 public class SoawarApplication {
 
-    //@Value("${layer.test}")
+    //@Value("${layer.cglibproxytest}")
     //private String testValue;
     //
     //@PostConstruct
-    //private void test() {
+    //private void cglibproxytest() {
     //    System.out.println("testValue is :" + testValue);
     //}
 

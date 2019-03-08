@@ -8,6 +8,7 @@
         <module>service</module>
         <module>backwar</module>
         <module>soawar</module>
+        <module>api</module>
     </modules>
 
     <parent>
