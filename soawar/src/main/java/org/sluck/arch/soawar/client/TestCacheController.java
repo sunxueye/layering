@@ -19,7 +19,7 @@ public class TestCacheController {
     @ResponseBody
     public String testProsxy() {
 
-        return clientApplication.proxyTest("cglibproxytest");
+        return clientApplication.serviceUrl("cglibproxytest");
     }
 
 }

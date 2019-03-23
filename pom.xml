@@ -9,6 +9,9 @@
         <module>backwar</module>
         <module>soawar</module>
         <module>api</module>
+        <module>turbine</module>
+        <module>zuul</module>
+        <module>stream</module>
     </modules>
 
     <parent>
