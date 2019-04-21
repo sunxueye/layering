@@ -12,6 +12,7 @@
         <module>turbine</module>
         <module>zuul</module>
         <module>stream</module>
+        <module>configclient</module>
     </modules>
 
     <parent>

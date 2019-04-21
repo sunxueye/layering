@@ -1,18 +1,20 @@
-package org.sluck.arch.layering.backwar;
+package org.sluck.arch.layering.backwar.config;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.cloud.config.server.EnableConfigServer;
+import org.springframework.cloud.netflix.eureka.EnableEurekaClient;
 
 @SpringBootApplication
 @EnableConfigServer
-public class BackwarApplication {
+@EnableEurekaClient
+public class ConfigApplication {
 
     public static void main(String[] args) {
 
-        args = new String[1];
+//        args = new String[1];
 //        args[0] = "--spring.profiles.active=dev";
-        SpringApplication.run(BackwarApplication.class, args);
+        SpringApplication.run(ConfigApplication.class, args);
 
     }
 
