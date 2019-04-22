@@ -1,0 +1,1 @@
+#org.springframework.cloud.bootstrap.BootstrapConfiguration = org.sluck.arch.soawar.configclient.locator.CustomConfigServiceBootstrapConfiguration
