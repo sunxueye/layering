@@ -16,7 +16,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @SpringBootApplication
 @RestController
-public class TestApplication implements TestClient {
+public class  TestApplication implements TestClient {
 
     private Logger logger = LoggerFactory.getLogger(getClass());
 

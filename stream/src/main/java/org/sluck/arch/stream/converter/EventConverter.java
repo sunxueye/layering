@@ -5,7 +5,7 @@ package org.sluck.arch.stream.converter;
  *
  * Created by sunxy on 2019/3/27 15:50.
  */
-public interface EventConverter<E, T> {
+public interface EventConverter {
 
     /**
      * 是否可以将源类型转换为目标类型
@@ -22,7 +22,7 @@ public interface EventConverter<E, T> {
      * @param event
      * @return
      */
-    T fromEvent(E event);
+    <T, E> T fromEvent(E event, Class<T> targetType);
 
     /**
      * 将目标类型转换为事件类型
@@ -30,5 +30,5 @@ public interface EventConverter<E, T> {
      * @param playload
      * @return
      */
-    E toEvent(T playload);
+    <E, T> E toEvent(Class<E> targetType, T playload);
 }

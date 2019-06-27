@@ -3,12 +3,15 @@ package org.sluck.arch.stream.binder.kafka;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.ProducerConfig;
-import org.sluck.arch.stream.binder.ConsumerAndProducerEventChannels;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.sluck.arch.stream.channel.ConsumerAndProducerEventChannels;
 import org.sluck.arch.stream.channel.EventChannel;
 import org.sluck.arch.stream.channel.EventChannelFactory;
 import org.sluck.arch.stream.properties.EventChannelPropertiesGetter;
 import org.sluck.arch.stream.util.thread.ExecutorServiceFactory;
 import org.springframework.beans.BeansException;
+import org.springframework.beans.factory.SmartInitializingSingleton;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.ApplicationContextAware;
 import org.springframework.context.EnvironmentAware;
@@ -25,10 +28,11 @@ import java.util.Map;
  * <p>
  * Created by sunxy on 2019/3/27 20:03.
  */
-public class KafkaEventChannelBinder implements EnvironmentAware, ApplicationContextAware {
+public class KafkaEventChannelBinder implements EnvironmentAware, ApplicationContextAware, SmartInitializingSingleton {
 
     //集群配置前缀
     private static final String BROKER_CLUSTER_CONFIG_PREFIX = "application.brokerCluster.kafka.serverAddress.";
+    private static final String CONSUME_THREAD_SIZE = ".consume.thread.size";
 
     private Environment environment;
 
@@ -38,6 +42,8 @@ public class KafkaEventChannelBinder implements EnvironmentAware, ApplicationCon
     private Map<String, ConsumerAndProducerEventChannels> cacheChannelConfigures = new HashMap<>(); //缓存的 channel 配置信息
 
     private Map<String, List<KafkaConsumeTaskRunner>> allConsumerTaskRunners = new HashMap<>(); //key 为集群名称， value 为其对应的所有的消费任务执行器
+
+    private Logger logger = LoggerFactory.getLogger(getClass());
 
     /**
      * kafka broker client 启动
@@ -91,7 +97,7 @@ public class KafkaEventChannelBinder implements EnvironmentAware, ApplicationCon
     }
 
     private KafkaConsumeTaskRunner configureKafkaConsumer(EventChannelPropertiesGetter propertiesGetter, String brokerClusterName, String consumer,
-                                        String brokerAddress, List<String> topics) {
+                                                          String brokerAddress, List<String> topics) {
         Map<String, Object> consumerConfg = null;
         if (propertiesGetter != null) {
             consumerConfg = propertiesGetter.getConsumerProps(consumer);
@@ -111,16 +117,29 @@ public class KafkaEventChannelBinder implements EnvironmentAware, ApplicationCon
 
         //为消费者配置任务执行器
         boolean autoCommit = consumerConfg.get(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG).toString().equals("true");
+        //消费线程数
+        int taskNum = 20; //默认 20
+        String taskSize = environment.getProperty(consumer + CONSUME_THREAD_SIZE); // 也可以 consumer 单独配置
+        if (taskSize != null && !"".equals(taskSize)) {
+            try {
+                taskNum = Integer.valueOf(taskSize);
+            } catch (Exception e) {
+                logger.error("消费线程数量配置有误：{}", taskSize, e);
+            }
+        }
+
         KafkaConsumeTaskRunner runner = new KafkaConsumeTaskRunner(brokerClusterName, consumer, kafkaConsumer,
-                cacheChannelConfigures.get(brokerClusterName), autoCommit, 8);
+                cacheChannelConfigures.get(brokerClusterName), autoCommit, taskNum);
         kafkaConsumer.subscribe(topics, runner);
         return runner;
     }
 
     private Map<String, Object> getDefaultKafkaConsumerProps() {
         Map<String, Object> props = new HashMap<>();
-        props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "true");
+        props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");
         props.put(ConsumerConfig.AUTO_COMMIT_INTERVAL_MS_CONFIG, "500");
+        props.put(ConsumerConfig.FETCH_MAX_BYTES_CONFIG, 100 * 1024 * 1024);
+        props.put(ConsumerConfig.RECEIVE_BUFFER_CONFIG, 200 * 1024 * 1024);
         props.put(ConsumerConfig.SESSION_TIMEOUT_MS_CONFIG, "15000");
         props.put(ConsumerConfig.FETCH_MAX_WAIT_MS_CONFIG, "2000");
         props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, "org.apache.kafka.common.serialization.StringDeserializer");
@@ -158,6 +177,13 @@ public class KafkaEventChannelBinder implements EnvironmentAware, ApplicationCon
     @Override
     public void setApplicationContext(ApplicationContext applicationContext) throws BeansException {
         this.applicationContext = applicationContext;
+    }
+
+    @Override
+    public void afterSingletonsInstantiated() {
+        EventChannelFactory eventChannelFactory = applicationContext.getBean(EventChannelFactory.class);
+        //启动
+        brokerClientStart(eventChannelFactory);
     }
 
 }

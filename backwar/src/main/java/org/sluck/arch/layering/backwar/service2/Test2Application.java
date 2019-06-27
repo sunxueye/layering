@@ -8,6 +8,8 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.concurrent.TimeUnit;
+
 @SpringBootApplication
 @RestController
 public class Test2Application {
@@ -15,7 +17,8 @@ public class Test2Application {
     private Logger logger = LoggerFactory.getLogger(getClass());
 
     @RequestMapping("/hello")
-    public String home() {
+    public String home() throws InterruptedException {
+        TimeUnit.SECONDS.sleep(5);
         logger.info("i am service 2");
         return "Hello world, i am service 2";
     }

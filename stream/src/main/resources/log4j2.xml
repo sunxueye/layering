@@ -36,21 +36,21 @@
         <AsyncLogger name="org.hibernate.validator.internal.util.Version" level="info"/>
         <AsyncLogger name="org.springframework.boot.actuate.endpoint.jmx" level="info"/>
 
-        <AsyncLogger  name="org.springframework" level="info" additivity="true" includeLocation="true">
-            <AppenderRef ref="running-log" />
-        </AsyncLogger >
+<!--        <AsyncLogger  name="org.springframework" level="info" additivity="true" includeLocation="true">-->
+<!--            <AppenderRef ref="running-log" />-->
+<!--        </AsyncLogger >-->
 
-        <AsyncLogger  name="org.hibernate" level="info" additivity="true" includeLocation="true">
-            <AppenderRef ref="running-log" />
-        </AsyncLogger >
+<!--        <AsyncLogger  name="org.hibernate" level="info" additivity="true" includeLocation="true">-->
+<!--            <AppenderRef ref="running-log" />-->
+<!--        </AsyncLogger >-->
 
-        <AsyncLogger  name="java.sql" level="debug" additivity="true" includeLocation="true">
-            <AppenderRef ref="running-log" />
-        </AsyncLogger >
+<!--        <AsyncLogger  name="java.sql" level="debug" additivity="true" includeLocation="true">-->
+<!--            <AppenderRef ref="running-log" />-->
+<!--        </AsyncLogger >-->
 
-        <AsyncLogger name="org.sluck.arch" level="info" additivity="true" includeLocation="true">
-            <AppenderRef ref="running-log"/>
-        </AsyncLogger>
+<!--        <AsyncLogger name="org.sluck.arch" level="info" additivity="true" includeLocation="true">-->
+<!--            <AppenderRef ref="running-log"/>-->
+<!--        </AsyncLogger>-->
         <asyncRoot level="info">
             <AppenderRef ref="Console"/>
         </asyncRoot>

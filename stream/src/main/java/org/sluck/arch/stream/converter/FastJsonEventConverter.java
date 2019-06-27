@@ -7,7 +7,7 @@ import com.alibaba.fastjson.JSON;
  *
  * Created by sunxy on 2019/3/27 16:04.
  */
-public class FastJsonEventConverter implements EventConverter<Object, String> {
+public class FastJsonEventConverter implements EventConverter {
 
     @Override
     public boolean canConvert(Class sourceType, Class targetType) {
@@ -23,13 +23,13 @@ public class FastJsonEventConverter implements EventConverter<Object, String> {
     }
 
     @Override
-    public String fromEvent(Object event) {
-        return JSON.toJSONString(event);
+    public <T, E> T fromEvent(E event, Class<T> targetType) {
+        return JSON.parseObject(event.toString(), targetType);
     }
 
     @Override
-    public Object toEvent(String json) {
-        return JSON.parse(json);
+    public <E, T> E toEvent(Class<E> targetType, T playload) {
+        return (E) JSON.toJSONString(playload);
     }
 
     /**

@@ -1,8 +1,4 @@
-package org.sluck.arch.stream.binder;
-
-import org.sluck.arch.stream.channel.ConsumerEventChannel;
-import org.sluck.arch.stream.channel.EventChannel;
-import org.sluck.arch.stream.channel.SenderEventChannel;
+package org.sluck.arch.stream.channel;
 
 import java.util.ArrayList;
 import java.util.HashMap;

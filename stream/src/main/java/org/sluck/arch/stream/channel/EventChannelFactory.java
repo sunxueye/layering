@@ -13,7 +13,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 事件通道对象工厂
- *
+ * <p>
  * Created by sunxy on 2019/3/27 17:04.
  */
 public class EventChannelFactory implements EnvironmentAware {
@@ -30,7 +30,7 @@ public class EventChannelFactory implements EnvironmentAware {
 
     private Environment environment;
 
-    private final ConcurrentHashMap<EventChannel, Object> cachedChannels = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<EventChannel, EventChannel> cachedChannels = new ConcurrentHashMap<>();
 
     /**
      * 增加消费事件通道
@@ -44,7 +44,7 @@ public class EventChannelFactory implements EnvironmentAware {
                                         EventListenerMethodHandler eventHandler) {
         ConsumerEventChannel channel = new ConsumerEventChannel(brokerClusterName, topicName, groupName, eventHandler);
 
-        cachedChannels.putIfAbsent(channel, new Object());
+        addConsumeEventChannel(channel, eventHandler);
     }
 
     /**
@@ -61,7 +61,7 @@ public class EventChannelFactory implements EnvironmentAware {
         }
         ConsumerEventChannel channel = new ConsumerEventChannel(defaultBrokerCluster, topicName, groupName, eventHandler);
 
-        cachedChannels.putIfAbsent(channel, new Object());
+        addConsumeEventChannel(channel, eventHandler);
     }
 
     /**
@@ -76,7 +76,19 @@ public class EventChannelFactory implements EnvironmentAware {
         }
         ConsumerEventChannel channel = new ConsumerEventChannel(defaultBrokerCluster, topicName, defalutConsumer, eventHandler);
 
-        cachedChannels.putIfAbsent(channel, new Object());
+        addConsumeEventChannel(channel, eventHandler);
+    }
+
+    private void addConsumeEventChannel(ConsumerEventChannel channel, EventListenerMethodHandler handler) {
+        if (cachedChannels.get(channel) == null) {
+            EventChannel eventChannel = cachedChannels.putIfAbsent(channel, channel);
+            if (eventChannel == null) {
+                //添加成功
+                return;
+            }
+        }
+        ConsumerEventChannel eventChannel = (ConsumerEventChannel) cachedChannels.get(channel);
+        eventChannel.addHandler(handler);
     }
 
     /**

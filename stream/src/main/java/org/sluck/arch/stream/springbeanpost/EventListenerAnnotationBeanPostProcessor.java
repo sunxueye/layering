@@ -22,14 +22,12 @@ import java.util.Set;
  * 基于 spring bean post processor 的 事件监听器注解处理器
  * {@link BeanPostProcessor}
  * {@link EventListener}
- *
+ * <p>
  * Created by sunxy on 2019/3/27 10:25.
  */
-public class EventListenerAnnotationBeanPostProcessor implements BeanPostProcessor, ApplicationContextAware, SmartInitializingSingleton {
+public class EventListenerAnnotationBeanPostProcessor implements BeanPostProcessor, ApplicationContextAware {
 
     private ConfigurableApplicationContext applicationContext;
-
-    private final Set<Runnable> eventListenerCallbacks = new HashSet<>();
 
     @Override
     public void setApplicationContext(ApplicationContext applicationContext) throws BeansException {
@@ -44,9 +42,7 @@ public class EventListenerAnnotationBeanPostProcessor implements BeanPostProcess
         for (Method method : uniqueDeclaredMethods) {
             EventListener eventListener = AnnotatedElementUtils.findMergedAnnotation(method, EventListener.class);
             if (eventListener != null && !method.isBridge()) {
-                this.eventListenerCallbacks.add(() -> {
-                    this.doPostProcess(eventListener, method, bean);
-                });
+                this.doPostProcess(eventListener, method, bean);
             }
         }
         return bean;
@@ -71,10 +67,5 @@ public class EventListenerAnnotationBeanPostProcessor implements BeanPostProcess
         } else {
             throw new IllegalArgumentException("不能出现默认的消费者名称为空, broker 集群不为空");
         }
-    }
-
-    @Override
-    public void afterSingletonsInstantiated() {
-        this.eventListenerCallbacks.forEach(Runnable::run);
     }
 }

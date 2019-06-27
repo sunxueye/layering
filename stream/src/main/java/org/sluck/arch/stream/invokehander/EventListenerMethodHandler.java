@@ -74,7 +74,8 @@ public class EventListenerMethodHandler {
         if (cachedCanConvert) {
             Object event = null;
             try {
-                event = eventConverter.toEvent(providedArgs[0]);
+                Class<?> target = method.getParameterTypes()[0];
+                event = eventConverter.fromEvent(providedArgs[0], target);
             } catch (Exception | Error e) {
                 logger.error("事件转换出错", e);
                 String text = (e.getMessage() != null ? e.getMessage() : "Illegal argument convert");
@@ -131,5 +132,9 @@ public class EventListenerMethodHandler {
                 "Endpoint [" + getBeanType().getName() + "]\n" +
                 "Method [" + getMethod().toGenericString() + "] " +
                 "with argument values:\n" + formattedArgs;
+    }
+
+    public String getMethodName() {
+        return targetBean.getClass().getSimpleName() + ":" + method.getName();
     }
 }

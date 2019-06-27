@@ -1,211 +1,93 @@
 package org.sluck.arch.stream.binder.kafka;
 
-import java.util.HashSet;
-import java.util.PriorityQueue;
-import java.util.Random;
-import java.util.Set;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.util.List;
+import java.util.NoSuchElementException;
+import java.util.TreeSet;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
- * 用于保存可以提交的最小的 offset 的队列，
- * 如： 1 2 4 5 8, 最小的就是 2，
- * 当插入 3 的时候，就变成 5，
- * <p> 最少会保存最后一次提交的值
+ * 用于保存 topic_channel 对应的还未消费的 offset
+ * 当获取可提交的 offset 的时候，直接获取最小的 key 即可（此动作无需上锁）
+ * <p>
  * Created by sunxy on 2019/3/28 17:43.
  */
 public class OffsetCommitQueue {
 
-    private ReentrantLock lock = new ReentrantLock();
+    private ReentrantLock lock = new ReentrantLock();//并发操作的锁，此对象会被多个线程并发操作，直接上重量级锁，跳过 synchronized 的轻量级与偏向锁
 
-    private Long minOffset;
+    private TreeSet<Long> offsets = new TreeSet<>();// 保存了该 channel 的还未消费的 offset
 
-    private volatile boolean needCommit; //是否需要 提交，当 minOffset 变更时候需要
+    private Long maxOffset; //用于保存此队列最大的 offset，防止 queue 所有的值都被取走无值的情况下没有 offset 可提交
 
-    private PriorityQueue<Long> otherOffsets = new PriorityQueue<>();
+    private Logger logger = LoggerFactory.getLogger(getClass());
 
-    public static void main(String[] args) throws InterruptedException {
+    /**
+     * 添加 offset
+     *
+     * @param offsetList
+     */
+    public void addOffset(List<Long> offsetList) {
+        try {
+            lock.lock();
 
-        ExecutorService service = Executors.newFixedThreadPool(5);
-        OffsetCommitQueue queue = new OffsetCommitQueue();
-        Random random = new Random();
-
-        Set<Long> set = new HashSet<>();
-
-        int i = 5;
-        while(i > 0) {
-            Runnable run = () -> {
-
-                for (int j = 0; j < 10000; j ++) {
-                    Long value = Long.valueOf(random.nextInt(10000));
-                    queue.add(value);
-                    set.add(value);
+            offsetList.forEach(offset -> {
+                offsets.add(offset);
+                if (maxOffset == null || offset > maxOffset) {
+                    maxOffset = offset;
                 }
-
-                Long begin = System.currentTimeMillis();
-                for (int j = 0; j < 10000; j ++) {
-                    Long value = Long.valueOf(random.nextInt(10000));
-                    queue.add(value);
-                    set.add(value);
-                }
-
-                System.out.println("end :" + (System.currentTimeMillis() - begin) + " ms");
-            };
-            service.submit(run);
-            i--;
+            });
+        } catch (Exception | Error e) {
+            logger.error("offset 增加异常", e);
+        } finally {
+            lock.unlock();
         }
-
-        Thread.currentThread().sleep(1000);
-
-        while (queue.isNeedCommit()) {
-            Long value = queue.poll();
-            System.out.println(value);
-        }
-
-        StringBuilder sb = new StringBuilder();
-        for (int t=0; t<10000;t++ ) {
-            if (!set.contains(Long.valueOf(t))) {
-                sb.append(t + ",");
-            }
-
-        }
-        //set.forEach(l -> {
-        //    if ()
-        //
-        //});
-        System.out.println(sb);
     }
 
     /**
-     * 增加已经提交的Offset
+     * 移除 offset
      *
      * @param offset
      */
-    public void add(Long offset) {
-
+    public void removeOffset(Long offset) {
         try {
             lock.lock();
 
-            if (minOffset == null) {
-                updateMinOffset(offset);
-                return;
-            }
-
-            Long next = otherOffsets.peek();
-            //去重
-            if (offset.equals(minOffset) || offset.equals(next)) {
-                return;
-            }
-
-            if (offset <= minOffset) {
-                //donothing
-            } else if (offset - minOffset > 1) {
-                addQueueOffset(offset);
-            } else {
-                //正好 多 1
-                if (!otherOffsets.isEmpty()) {
-                    if (next - offset == 1) {
-                        //需要从 队列中获取 最小的 offset
-                        Long newMin = pollQueueOffset();
-                        if (newMin != null) {
-                            updateMinOffset(newMin);
-                            return;
-                        }
-                    }
-                }
-                updateMinOffset(offset);
-            }
-
+            offsets.remove(offset);
+        } catch (Exception | Error e) {
+            logger.error("offset 移除异常", e);
         } finally {
             lock.unlock();
         }
     }
 
     /**
-     * 获取可以提交的 offset，如果为空 返回 null
+     * 获取需要提交的 offset
      *
-     * @return
+     * @return 如果刚初始化，还未有 offset，则返回 null
      */
-    public Long poll() {
-        if (minOffset == null) {
-            return null;
-        }
-
+    public Long getNeedCommitOffset() {
+        long max = maxOffset; //先保存下副本到线程栈中，防止并并发修改
         try {
-            lock.lock();
-
-            if (otherOffsets.isEmpty()) {
-                needCommit = false;
-                return minOffset;
-            }
-
-            Long returnValue = minOffset;
-            needCommit = false;
-
-            Long next = otherOffsets.peek();
-            if (next - minOffset == 1) {
-                Long newMin = pollQueueOffset();
-                if (newMin != null) {
-                    updateMinOffset(newMin);
-                }
-            }
-
-            return returnValue;
-        } finally {
-            lock.unlock();
+            return offsets.first();
+        } catch (NoSuchElementException e) {
+            return max;
         }
     }
 
     /**
-     * 添加新的 offset 至队列中
-     *
-     * @param newOffset
-     * @return
-     */
-    private void addQueueOffset(Long newOffset) {
-
-        if (otherOffsets.isEmpty()) {
-            otherOffsets.add(newOffset);
-            return;
-        }
-
-        Long first = otherOffsets.peek();
-        if (!newOffset.equals(first) && first - newOffset != 1) {
-            otherOffsets.add(newOffset);
-        }
-    }
-
-    /**
-     * 从优先级队列中获取最小的可提交的 offset，如果没有则为 null
+     * 是否还包含未提交的 offset
      *
      * @return
      */
-    private Long pollQueueOffset() {
-        if (otherOffsets.isEmpty()) {
-            return null;
+    public boolean hasNoCommitOffset() {
+        try {
+            return offsets.first() != null;
+        } catch (NoSuchElementException e) {
+            return false;
         }
-
-        Long first = otherOffsets.poll();
-        Long next = otherOffsets.peek();
-        if (next == null) {
-            return first;
-        } else if (next - first > 1) {
-            return first;
-        } else {
-            //等于 或 正好大1 的情况 递归继续处理
-            return pollQueueOffset();
-
-        }
-    }
-
-    public boolean isNeedCommit() {
-        return needCommit;
-    }
-
-    private void updateMinOffset(Long min) {
-        this.minOffset = min;
-        this.needCommit = true;
     }
 
 }

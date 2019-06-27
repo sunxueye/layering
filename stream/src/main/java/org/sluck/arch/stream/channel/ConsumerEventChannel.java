@@ -4,14 +4,17 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.sluck.arch.stream.invokehander.EventListenerMethodHandler;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
  * 消费类型的通道，内部包含对应的事件处理器
- *
+ * <p>
  * Created by sunxy on 2019/3/27 15:10.
  */
 public class ConsumerEventChannel extends EventChannel {
 
-    private final EventListenerMethodHandler eventHandler;
+    private final List<EventListenerMethodHandler> eventHandlers = new ArrayList<>();
 
     private Logger logger = LoggerFactory.getLogger(getClass());
 
@@ -25,7 +28,11 @@ public class ConsumerEventChannel extends EventChannel {
     public ConsumerEventChannel(String brokerClusterName, String topicName, String groupName,
                                 EventListenerMethodHandler eventHandler) {
         super(brokerClusterName, topicName, groupName);
-        this.eventHandler = eventHandler;
+        addHandler(eventHandler);
+    }
+
+    public void addHandler(EventListenerMethodHandler handler) {
+        this.eventHandlers.add(handler);
     }
 
     /**
@@ -35,16 +42,23 @@ public class ConsumerEventChannel extends EventChannel {
      * @return 是否消费成功
      */
     public boolean consumeEvent(Object... parms) {
-        try {
-            Object res = eventHandler.invoke(parms);
-            if (res instanceof Boolean) {
-                return (boolean) res;
+        boolean success = true;
+        for (EventListenerMethodHandler handler : eventHandlers) {
+            try {
+                Object res = handler.invoke(parms);
+                if (res instanceof Boolean) {
+                     if(!(boolean) res) {
+                         //有一个失败则为失败
+                         success = false;
+                     }
+                }
+                logger.info("{} 执行完毕, 执行结果: {}", handler.getMethodName(), res);
+            } catch (Exception | Error e) {
+                logger.error("{} 事件消费处理失败", handler.getMethodName(), e);
+                success = false;
             }
-        } catch (Exception | Error e) {
-            logger.error("事件消费处理失败", e);
-            return false;
         }
         //默认没有异常就是消费成功
-        return true;
+        return success;
     }
 }

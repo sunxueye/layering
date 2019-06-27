@@ -4,8 +4,9 @@ import org.apache.kafka.clients.consumer.*;
 import org.apache.kafka.common.TopicPartition;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.sluck.arch.stream.binder.ConsumerAndProducerEventChannels;
+import org.sluck.arch.stream.channel.ConsumerAndProducerEventChannels;
 import org.sluck.arch.stream.channel.ConsumerEventChannel;
+import org.sluck.arch.stream.recover.ConsumeFailedCover;
 import org.sluck.arch.stream.util.thread.ExecutorServiceFactory;
 import org.sluck.arch.stream.util.thread.PoolThreadFactory;
 
@@ -13,7 +14,6 @@ import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -28,6 +28,7 @@ public class KafkaConsumeTaskRunner implements ConsumerRebalanceListener {
 
     private static final int MAX_UN_CONSUME_RECORD_COUNT = 1000; //最多积攒 x 个未消费的消息，超过此阈值 不在 poll 消息
     private static final Long MAX_WAIT_MS = 3000L; //主线程最多睡眠时间 ms
+    private static final int MAX_POLL_WAIT_SE = 5; //poll 操作最多等待 秒数
 
     private String brokerCluster;
     private String consumerName;
@@ -37,13 +38,12 @@ public class KafkaConsumeTaskRunner implements ConsumerRebalanceListener {
     private ConsumerAndProducerEventChannels eventChannels; //所在集群下的所有消费者与生产者事件通道
 
     private ConcurrentHashMap<TopicPartition, OffsetCommitQueue> topicAndUncommitOffsets = new ConcurrentHashMap<>();
+    private ConcurrentHashMap<TopicPartition, Long> lastCommitOffsets = new ConcurrentHashMap<>();//上次提交的 offset
     private Set<TopicPartition> needCleanList = new HashSet<>();
 
     private ExecutorService execThreadPool;
 
     private ExecutorService pollThread;
-
-    private ScheduledExecutorService commitThread; //提交 offset 线程
 
     private boolean autoCommit;
 
@@ -51,10 +51,12 @@ public class KafkaConsumeTaskRunner implements ConsumerRebalanceListener {
 
     private AtomicInteger unConsumeRecordCount = new AtomicInteger(0); //未消费的任务数量
 
+    private ConsumeFailedCover failedCover; //消费失败处理器
+
     private Logger logger = LoggerFactory.getLogger(getClass());
 
     public KafkaConsumeTaskRunner(String brokerCluster, String consumerName, KafkaConsumer<String, Object> consumer,
-                                  ConsumerAndProducerEventChannels eventChannels, boolean autoCommit, int taskSize) {
+                                  ConsumerAndProducerEventChannels eventChannels, boolean autoCommit, int taskSize, ConsumeFailedCover failedCover) {
         this.brokerCluster = brokerCluster;
         this.consumerName = consumerName;
 
@@ -63,11 +65,10 @@ public class KafkaConsumeTaskRunner implements ConsumerRebalanceListener {
 
         this.autoCommit = autoCommit;
 
+        this.failedCover = failedCover;
+
         //初始化 pollThread
         pollThread = ExecutorServiceFactory.newSingleThreadExecutor(new PoolThreadFactory(consumerName + "_pollThread"));
-
-        //初始化提交 offsetThread
-        commitThread = ExecutorServiceFactory.newScheduledThreadPool(1, new PoolThreadFactory(consumerName + "_commitThread"));
 
         //初始化线程池
         initThreadPool(consumerName, autoCommit, taskSize);
@@ -80,16 +81,13 @@ public class KafkaConsumeTaskRunner implements ConsumerRebalanceListener {
         //开始执行任务线程池任务
         pollThread.submit(() -> {
             while (!shutdown) {
-                commitOffsetAsync();
+                if (!autoCommit) {
+                    commitOffsetSync();
+                    cleanOffsetQueue();
+                }
                 poll();
             }
         });
-
-        //开始 commit_offset 线程任务
-        commitThread.scheduleAtFixedRate(() -> {
-            commitOffsetSync();
-            cleanOffsetQueue();
-        }, 3, 1, TimeUnit.SECONDS); //1s 提交 1次
     }
 
     /**
@@ -107,19 +105,28 @@ public class KafkaConsumeTaskRunner implements ConsumerRebalanceListener {
         }
 
         //执行 poll 操作
-        ConsumerRecords<String, Object> records = consumer.poll(Duration.ofSeconds(5));
+        ConsumerRecords<String, Object> records = consumer.poll(Duration.ofSeconds(MAX_POLL_WAIT_SE));
         unConsumeRecordCount.addAndGet(records.count());
         for (TopicPartition partition : records.partitions()) {
             List<ConsumerRecord<String, Object>> partitionRecords = records.records(partition);
+            //构造 part 对应的 保存还未消费的 offset 队列
+            OffsetCommitQueue offsetQueue = topicAndUncommitOffsets.computeIfAbsent(partition, k -> new OffsetCommitQueue());
+            List<Long> offsets = new ArrayList<>();
+            List<Runnable> tasks = new ArrayList<>();
             for (ConsumerRecord<String, Object> record : partitionRecords) {
-                Runnable task = makeConsumeTask(record);
+                //添加还未消费的 offset
+                offsets.add(record.offset());
+                tasks.add(makeConsumeTask(record));
+            }
+            offsetQueue.addOffset(offsets);
+            tasks.forEach(task -> {
                 if (autoCommit) {
                     //自动提交的话自己执行
                     task.run();
                 } else {
                     execThreadPool.submit(task);
                 }
-            }
+            });
         }
     }
 
@@ -136,6 +143,8 @@ public class KafkaConsumeTaskRunner implements ConsumerRebalanceListener {
                 if (logger.isDebugEnabled()) {
                     logger.debug("_offset 同步提交成功");
                 }
+                //更新上次提交记录
+                offsets.keySet().forEach(tp -> lastCommitOffsets.put(tp, offsets.get(tp).offset()));
             } catch (Exception | Error e) {
                 logger.error("commit_offsets is exception", e);
             }
@@ -153,7 +162,7 @@ public class KafkaConsumeTaskRunner implements ConsumerRebalanceListener {
             try {
                 consumer.commitAsync(offsets, (tp, offset) -> {
                     if (logger.isDebugEnabled()) {
-                        logger.debug("_offset 异步提交成功");
+                        logger.debug("_offset 异步提交申请成功");
                     }
                 });
             } catch (Exception | Error e) {
@@ -172,17 +181,33 @@ public class KafkaConsumeTaskRunner implements ConsumerRebalanceListener {
         Map<TopicPartition, OffsetAndMetadata> offsets = new HashMap<>();
         topicAndUncommitOffsets.keySet().forEach(tp -> {
             OffsetCommitQueue queue = topicAndUncommitOffsets.get(tp);
-            if (queue.isNeedCommit()) {
-                Long offset = queue.poll();
-                if (offset != null) {
-                    if (logger.isDebugEnabled()) {
-                        logger.debug("topic:" + tp.topic() + ", part:" + tp.partition() + ", offset:" + offset);
-                    }
-                    offsets.put(tp, new OffsetAndMetadata(offset));
+            Long offset = queue.getNeedCommitOffset();
+            if (offset != null) {
+                if (logger.isDebugEnabled()) {
+                    logger.debug("topic:" + tp.topic() + ", part:" + tp.partition() + ", offset:" + offset);
                 }
+                offsets.put(tp, new OffsetAndMetadata(offset + 1)); //下一个需要被消费的 msgId
             }
         });
-        return offsets;
+        return filterNeedCommit(offsets);
+    }
+
+    /**
+     * 过滤并只保留需要提交的 offset
+     *
+     * @param offsets
+     * @return
+     */
+    private Map<TopicPartition, OffsetAndMetadata> filterNeedCommit(Map<TopicPartition, OffsetAndMetadata> offsets) {
+        //如果需要提交的 offset <= 上次提交的 offset ，则不需要再次提交
+        Map<TopicPartition, OffsetAndMetadata> res = new HashMap<>();
+        offsets.keySet().forEach(tp -> {
+            Long lastCommit = lastCommitOffsets.get(tp);
+            if (lastCommit == null || lastCommit < offsets.get(tp).offset()) {
+                res.put(tp, offsets.get(tp));
+            }
+        });
+        return res;
     }
 
 
@@ -193,7 +218,7 @@ public class KafkaConsumeTaskRunner implements ConsumerRebalanceListener {
         List<TopicPartition> needList = new ArrayList<>();
         needCleanList.forEach(tp -> {
             OffsetCommitQueue queue = topicAndUncommitOffsets.get(tp);
-            if (!queue.isNeedCommit()) {
+            if (!queue.hasNoCommitOffset()) {
                 topicAndUncommitOffsets.remove(tp);
                 needList.add(tp);
             }
@@ -211,22 +236,29 @@ public class KafkaConsumeTaskRunner implements ConsumerRebalanceListener {
     private Runnable makeConsumeTask(ConsumerRecord<String, Object> record) {
         ConsumerEventChannel eventChannel = eventChannels.getByConsumerAndTopic(consumerName, record.topic());
         return () -> {
-            logger.info("接受到消费事件消息【" + brokerCluster + "】,【" + consumerName + "】【key】 :" + record.key());
+            logger.info("接受到消费事件消息【{}】,【{}】,【key】:{}", brokerCluster, consumerName, record.key());
             boolean success = eventChannel.consumeEvent(record.value());
-            logger.info("消息处理完毕，处理结果:" + success);
+            logger.info("消息处理完毕，处理结果{}:", success);
 
             //更新未消费的 record 数量
             unConsumeRecordCount.decrementAndGet();
             if (success) {
                 if (logger.isDebugEnabled()) {
-                    logger.debug("更新消息消费进度, topic: " + record.topic() + ", part:" + record.partition() + ", offset :" + record.offset());
+                    logger.debug("消息消费成功，topic:{}, part:{}, offset:{} ", record.topic(), record.partition(), record.offset());
                 }
-                OffsetCommitQueue offsetQueue = topicAndUncommitOffsets.computeIfAbsent(
-                        new TopicPartition(record.topic(), record.partition()), k -> new OffsetCommitQueue());
-                //提交的为 下一次需要拉取的 offset 位置
-                offsetQueue.add(record.offset() + 1);
             } else {
                 //消费失败的情况处理
+                logger.info("消息消费失败, topic:{}, part:{}, offset:{} ", record.topic(), record.partition(), record.offset());
+                logger.info("消息交由 失败处理器 处理");
+                failedCover.handleFailedMessage(eventChannel, record.value());
+            }
+            //更新消费进度
+            OffsetCommitQueue offsetQueue = topicAndUncommitOffsets.computeIfAbsent(
+                    new TopicPartition(record.topic(), record.partition()), k -> new OffsetCommitQueue());
+            //移除已经消费的 offset
+            offsetQueue.removeOffset(record.offset());
+            if (logger.isDebugEnabled()) {
+                logger.debug("更新消息消费进度, topic:{}, part:{}, offset:{} ", record.topic(), record.partition(), record.offset());
             }
         };
     }
@@ -258,12 +290,9 @@ public class KafkaConsumeTaskRunner implements ConsumerRebalanceListener {
     public void onPartitionsAssigned(Collection<TopicPartition> partitions) {
         if (logger.isDebugEnabled()) {
             StringBuilder stringBuilder = new StringBuilder();
-            partitions.forEach(tp -> stringBuilder.append(tp.toString()));
+            partitions.forEach(tp -> stringBuilder.append(tp.toString() + ","));
             logger.debug("消费者组重新分区完毕, 此消费者新的分区信息:" + stringBuilder.toString());
         }
-
-        //清空所有待清空 list
-        needCleanList.clear();
 
         //清理已经不属于此消费者的 queue
         List<TopicPartition> needList = new ArrayList<>();
@@ -272,7 +301,7 @@ public class KafkaConsumeTaskRunner implements ConsumerRebalanceListener {
                 .filter(tp -> !partitions.contains(tp))
                 .forEach(tp -> {
                     OffsetCommitQueue queue = topicAndUncommitOffsets.get(tp);
-                    if (!queue.isNeedCommit()) {
+                    if (!queue.hasNoCommitOffset()) {
                         needList.add(tp);
                     } else {
                         laterCleanList.add(tp);
